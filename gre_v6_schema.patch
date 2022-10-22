@@ -1,0 +1,91 @@
+diff --git a/renderer/templates/interface.uc b/renderer/templates/interface.uc
+index 2e64e4b..2c0b262 100644
+--- a/renderer/templates/interface.uc
++++ b/renderer/templates/interface.uc
+@@ -133,7 +133,7 @@
+ 	}
+ 
+ 	// tunnel interfaces need additional sections
+-	if (tunnel_proto in [ "mesh", "l2tp", "vxlan", "gre" ])
++	if (tunnel_proto in [ "mesh", "l2tp", "vxlan", "gre", "gre6" ])
+ 		include("interface/" + tunnel_proto + ".uc", { interface, name, eth_ports, location, netdev, ipv4_mode, ipv6_mode, this_vid });
+ 
+ 	if (!interface.ethernet && length(interface.ssids) == 1 && !tunnel_proto && !("vxlan-overlay" in interface.services)) {
+diff --git a/renderer/templates/interface/gre6.uc b/renderer/templates/interface/gre6.uc
+new file mode 100644
+index 0000000..cceb1ec
+--- /dev/null
++++ b/renderer/templates/interface/gre6.uc
+@@ -0,0 +1,44 @@
++{%
++if (!interface.tunnel.peer_address) {
++        warn("A GRE tunnel requires a valid peer-address");
++        return;
++}
++%}
++
++# GRE Configuration
++set network.greip6=interface
++set network.greip6.proto='grev6tap'
++set network.greip6.peer6addr='{{ interface.tunnel.peer_address }}'
++set network.greip6.nohostroute='1'
++
++{%
++let suffix = '';
++let cfg = {
++	name: 'gretun6',
++	netdev: 'gre6t-greip6',
++	ipv4_mode, ipv4: interface.ipv4 || {},
++	ipv6_mode, ipv6: interface.ipv6 || {}
++};
++
++if (ethernet.has_vlan(interface)) {
++	cfg.name = 'gretun6_' + interface.vlan.id;
++	cfg.netdev = 'gre6t-greip6.' + interface.vlan.id;
++	cfg.this_vid = interface.vlan.id;
++	suffix = '.' + interface.vlan.id;
++}
++
++include("common.uc", cfg);
++%}
++
++add firewall rule
++set firewall.@rule[-1].target='ACCEPT'
++set firewall.@rule[-1].src={{ s(name) }}
++set firewall.@rule[-1].family='ipv6'
++set firewall.@rule[-1].proto='47'
++set firewall.@rule[-1].name='Allow-GRE-{{ name }}'
++
++add network device
++set network.@device[-1].name={{ s(name) }}
++set network.@device[-1].type='bridge'
++set network.@device[-1].ports='gre6t-greip6{{ suffix }}'
++set network.@device[-1].dhcp_healthcheck='{{ b(interface.tunnel.dhcp_healthcheck) }}'
+diff --git a/schema/interface.tunnel.gre6.yml b/schema/interface.tunnel.gre6.yml
+new file mode 100644
+index 0000000..b36560a
+--- /dev/null
++++ b/schema/interface.tunnel.gre6.yml
+@@ -0,0 +1,22 @@
++description:
++  This Object defines the properties of a GRE tunnel.
++type: object
++properties:
++  proto:
++    description:
++      This field must be set to gre.
++    type: string
++    const: gre6
++  peer-address:
++    description:
++      This is the IPv6 address of the remote host, that the GRE tunnel shall be
++      established with.
++    type: string
++    format: ipv6
++    example: '2405:200:802:600:61::1'
++  dhcp-healthcheck:
++    description:
++      Healthcheck will probe if the remote peer replies to DHCP discovery without sending
++      an ACK.
++    type: boolean
++    default: false
